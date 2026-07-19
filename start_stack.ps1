@@ -1,7 +1,8 @@
 param(
-    [ValidateSet("up", "down", "restart", "pull", "ps", "logs")]
+    [ValidateSet("up", "down", "restart", "pull", "ps", "logs", "initdb")]
     [string]$Action = "up",
     [switch]$Build,
+    [switch]$SkipInitTable,
     [switch]$Follow
 )
 
@@ -35,6 +36,14 @@ function Invoke-Compose {
     }
 }
 
+function Invoke-InitDb {
+    $tableName = if ($env:VECTOR_TABLE_NAME) { $env:VECTOR_TABLE_NAME } else { "embeddings" }
+    $dimensions = if ($env:VECTOR_EMBEDDING_DIMENSIONS) { $env:VECTOR_EMBEDDING_DIMENSIONS } else { "1536" }
+    $sql = "CREATE EXTENSION IF NOT EXISTS vector; CREATE TABLE IF NOT EXISTS public.$tableName (id uuid PRIMARY KEY, metadata jsonb, contents text, embedding vector($dimensions));"
+    Invoke-Compose -ComposeArgs @("exec", "-T", "timescaledb", "psql", "-U", "postgres", "-d", "postgres", "-c", $sql)
+    Write-Host "Vector table 'public.$tableName' is ready."
+}
+
 switch ($Action) {
     "up" {
         $args = @("up", "-d")
@@ -42,6 +51,9 @@ switch ($Action) {
             $args += "--build"
         }
         Invoke-Compose -ComposeArgs $args
+        if (-not $SkipInitTable) {
+            Invoke-InitDb
+        }
     }
     "down" {
         Invoke-Compose -ComposeArgs @("down")
@@ -49,6 +61,9 @@ switch ($Action) {
     "restart" {
         Invoke-Compose -ComposeArgs @("down")
         Invoke-Compose -ComposeArgs @("up", "-d")
+        if (-not $SkipInitTable) {
+            Invoke-InitDb
+        }
     }
     "pull" {
         Invoke-Compose -ComposeArgs @("pull")
@@ -62,5 +77,8 @@ switch ($Action) {
             $args += "-f"
         }
         Invoke-Compose -ComposeArgs $args
+    }
+    "initdb" {
+        Invoke-InitDb
     }
 }

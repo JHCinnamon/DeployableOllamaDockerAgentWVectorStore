@@ -25,6 +25,9 @@ From the repository root:
 # Start stack
 .\start_stack.ps1 -Action up
 
+# Start stack without table initialization
+.\start_stack.ps1 -Action up -SkipInitTable
+
 # Stop stack
 .\start_stack.ps1 -Action down
 
@@ -36,6 +39,9 @@ From the repository root:
 
 # Tail logs
 .\start_stack.ps1 -Action logs -Follow
+
+# Initialize vector table only
+.\start_stack.ps1 -Action initdb
 ```
 
 ## Start/Stop with Python
@@ -44,8 +50,10 @@ From the repository root:
 
 ```powershell
 python .\manage_stack.py up
+python .\manage_stack.py up --skip-init-table
 python .\manage_stack.py ps
 python .\manage_stack.py logs --follow
+python .\manage_stack.py initdb
 python .\manage_stack.py down
 ```
 
@@ -71,3 +79,4 @@ You can define them in your shell environment or in a root `.env` file before st
 
 - The database service is named `timescaledb` and is fully PostgreSQL compatible.
 - pgAdmin4 waits for the database health check before starting.
+- Running `up` or `restart` now initializes the default vector table (`embeddings`) automatically.
