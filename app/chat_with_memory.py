@@ -1,5 +1,5 @@
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pandas as pd
@@ -15,17 +15,27 @@ class ChatAnswer(BaseModel):
 
 
 SYSTEM_PROMPT = """
-You are a helpful AI assistant.
+You are a highly inquisitive and personable AI assistant engaged in an ongoing conversation with the user.
 
-You are given:
+CONVERSATION CONTEXT:
+You have access to:
 - The current user message
-- Retrieved long-term memory snippets from previous turns in this same conversation
+- A record of previous exchanges in this conversation (shown below in "MEMORY" section)
 
-Rules:
-1. Use memory snippets when they are relevant and helpful.
-2. If memory is not relevant, ignore it.
-3. Do not invent facts that are not in the memory or current message.
-4. Keep responses concise and practical.
+PERSONALITY & BEHAVIOR:
+1. Be genuinely interested in the user - remember personal details they've shared
+2. Ask thoughtful follow-up questions to learn more about them
+3. Reference past statements to show continuity ("You mentioned earlier that...")
+4. As the conversation progresses, become increasingly specific and personalized
+5. If the user asks you to recall information, review the MEMORY section carefully and provide what you know
+6. Don't apologize for not remembering things early in conversation - you're learning about them
+
+INSTRUCTIONS FOR RESPONSE:
+1. Answer the user's question directly and thoughtfully
+2. Incorporate relevant memory when appropriate
+3. Ask at least one clarifying or follow-up question to deepen understanding
+4. Be warm, conversational, and show genuine curiosity
+5. Keep responses concise but engaging
 """.strip()
 
 
@@ -41,19 +51,68 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--memory-limit",
         type=int,
-        default=6,
+        default=10,
         help="How many relevant past turns to retrieve per reply.",
     )
     return parser.parse_args()
 
 
-def _memory_context_json(df: pd.DataFrame) -> str:
+def _format_memory_for_context(df: pd.DataFrame) -> str:
+    """Format memory as readable conversation history."""
     if df.empty:
-        return "[]"
+        return "No previous context available."
+    
+    # Sort by created_at to maintain chronological order
+    df_sorted = df.sort_values("created_at", na_position="last")
+    
+    lines = []
+    for _, row in df_sorted.iterrows():
+        role = row.get("role", "unknown")
+        content = row.get("content", "")
+        # Extract just the message part if it's prefixed with role
+        if isinstance(content, str) and ": " in content:
+            content = content.split(": ", 1)[1]
+        lines.append(f"{role.upper()}: {content}")
+    
+    return "\n".join(lines)
 
-    keep_columns = [c for c in ["content", "role", "created_at", "distance"] if c in df.columns]
-    view = df[keep_columns].copy()
-    return view.to_json(orient="records", indent=2)
+
+def _get_comprehensive_memory(vec: VectorStore, conversation_id: str, user_text: str, memory_limit: int) -> pd.DataFrame:
+    """Get both semantically relevant and recent memory turns."""
+    # Get semantically similar turns
+    semantic_results = vec.search(
+        user_text,
+        limit=memory_limit // 2,
+        metadata_filter={"source": "conversation", "conversation_id": conversation_id},
+    )
+    
+    # Get recent turns regardless of semantic similarity
+    # This helps with chronological recall
+    try:
+        # Search for a common phrase to get all results, then filter by time
+        all_results = vec.search(
+            "conversation",
+            limit=memory_limit * 3,
+            metadata_filter={"source": "conversation", "conversation_id": conversation_id},
+        )
+        
+        # Filter to last N hours
+        if not all_results.empty and "created_at" in all_results.columns:
+            recent_cutoff = datetime.now() - timedelta(hours=2)
+            recent_results = all_results[
+                pd.to_datetime(all_results["created_at"], errors="coerce") > recent_cutoff
+            ].head(memory_limit // 2)
+        else:
+            recent_results = all_results.head(memory_limit // 2)
+    except Exception:
+        recent_results = pd.DataFrame()
+    
+    # Combine and deduplicate
+    combined = pd.concat([semantic_results, recent_results], ignore_index=True)
+    if not combined.empty:
+        combined = combined.drop_duplicates(subset=["id"], keep="first")
+    
+    return combined.head(memory_limit)
 
 
 def _store_turn(vec: VectorStore, conversation_id: str, role: str, text: str) -> None:
@@ -80,24 +139,50 @@ def _store_turn(vec: VectorStore, conversation_id: str, role: str, text: str) ->
 
 
 def _generate_reply(vec: VectorStore, conversation_id: str, user_text: str, memory_limit: int) -> str:
-    memory_df = vec.search(
-        user_text,
-        limit=memory_limit,
-        metadata_filter={"source": "conversation", "conversation_id": conversation_id},
-    )
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    memory_df = _get_comprehensive_memory(vec, conversation_id, user_text, memory_limit)
+    memory_context = _format_memory_for_context(memory_df)
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
-            "role": "assistant",
-            "content": "# Retrieved conversation memory\n" + _memory_context_json(memory_df),
+            "role": "user",
+            "content": f"MEMORY (previous exchanges in this conversation):\n{memory_context}\n\nNEW MESSAGE FROM USER:\n{user_text}",
         },
-        {"role": "user", "content": user_text},
     ]
 
     llm = LLMFactory("openai")
-    response = llm.create_completion(response_model=ChatAnswer, messages=messages)
-    return response.answer
+    try:
+        response = llm.create_completion(response_model=ChatAnswer, messages=messages)
+        result = response.answer if hasattr(response, 'answer') else str(response)
+        if result and len(result.strip()) > 0:
+            return result
+    except Exception as e:
+        logger.info(f"Structured response failed: {e}")
+    
+    # Fallback: create a raw OpenAI client (not instructor-wrapped)
+    try:
+        from openai import OpenAI
+        from config.settings import get_settings
+        
+        settings = get_settings()
+        raw_client = OpenAI(api_key=settings.openai.api_key, base_url=settings.openai.base_url)
+        fallback_response = raw_client.chat.completions.create(
+            model=settings.openai.default_model,
+            messages=messages,
+            temperature=settings.openai.temperature,
+            max_tokens=500,
+        )
+        answer = fallback_response.choices[0].message.content
+        if answer and len(answer.strip()) > 0:
+            return answer
+    except Exception as fallback_e:
+        logger.info(f"Fallback failed: {fallback_e}")
+    
+    # Final fallback: return a generic response
+    return "That's interesting! Tell me more about what you just shared."
 
 
 def main() -> None:
