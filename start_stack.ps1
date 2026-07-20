@@ -38,7 +38,7 @@ function Invoke-Compose {
 
 function Invoke-InitDb {
     $tableName = if ($env:VECTOR_TABLE_NAME) { $env:VECTOR_TABLE_NAME } else { "embeddings" }
-    $dimensions = if ($env:VECTOR_EMBEDDING_DIMENSIONS) { $env:VECTOR_EMBEDDING_DIMENSIONS } else { "1536" }
+    $dimensions = if ($env:VECTOR_EMBEDDING_DIMENSIONS) { $env:VECTOR_EMBEDDING_DIMENSIONS } else { "768" }
     $sql = "CREATE EXTENSION IF NOT EXISTS vector; CREATE TABLE IF NOT EXISTS public.$tableName (id uuid PRIMARY KEY, metadata jsonb, contents text, embedding vector($dimensions));"
     Invoke-Compose -ComposeArgs @("exec", "-T", "timescaledb", "psql", "-U", "postgres", "-d", "postgres", "-c", $sql)
     Write-Host "Vector table 'public.$tableName' is ready."

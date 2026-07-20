@@ -15,7 +15,10 @@ class VectorStore:
     def __init__(self):
         """Initialize the VectorStore with settings, OpenAI client, and Timescale Vector client."""
         self.settings = get_settings()
-        self.openai_client = OpenAI(api_key=self.settings.openai.api_key)
+        self.openai_client = OpenAI(
+            api_key=self.settings.openai.api_key,
+            base_url=self.settings.openai.base_url,
+        )
         self.embedding_model = self.settings.openai.embedding_model
         self.vector_settings = self.settings.vector_store
         self.vec_client = client.Sync(

@@ -16,7 +16,10 @@ class LLMFactory:
 
     def _initialize_client(self) -> Any:
         client_initializers = {
-            "openai": lambda s: instructor.from_openai(OpenAI(api_key=s.api_key)),
+            "openai": lambda s: instructor.from_openai(
+                OpenAI(api_key=s.api_key, base_url=s.base_url),
+                mode=instructor.Mode.JSON,
+            ),
             "anthropic": lambda s: instructor.from_anthropic(
                 Anthropic(api_key=s.api_key)
             ),

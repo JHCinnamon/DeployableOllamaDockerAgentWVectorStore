@@ -62,12 +62,21 @@ python .\manage_stack.py down
 From the repository root:
 
 ```powershell
+# Pull local models once (chat + embeddings)
+docker exec ollama ollama pull llama3.2:3b
+docker exec ollama ollama pull nomic-embed-text
+
+# Recreate embeddings table if you previously used 1536-dim vectors
+docker exec timescaledb psql -U postgres -d postgres -c "DROP TABLE IF EXISTS public.embeddings;"
+python .\manage_stack.py initdb
+
 cd .\app
 python .\chat_with_memory.py
 ```
 
 - Each user and assistant turn is embedded and stored in PostgreSQL (`public.embeddings`).
 - Memory retrieval is scoped by `conversation_id`, so you can resume the same thread later.
+- By default the app uses Ollama via the OpenAI-compatible endpoint (`http://localhost:11434/v1`).
 
 Resume an existing conversation:
 

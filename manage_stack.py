@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 COMPOSE_FILE = ROOT / "docker" / "docker-compose.yml"
 DEFAULT_TABLE_NAME = os.getenv("VECTOR_TABLE_NAME", "embeddings")
-DEFAULT_EMBEDDING_DIMENSIONS = int(os.getenv("VECTOR_EMBEDDING_DIMENSIONS", "1536"))
+DEFAULT_EMBEDDING_DIMENSIONS = int(os.getenv("VECTOR_EMBEDDING_DIMENSIONS", "768"))
 
 
 def docker_compose_command() -> list[str]:
